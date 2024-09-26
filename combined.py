@@ -3,6 +3,9 @@ import time
 import utime
 import math
 import sys
+import network
+import ubinascii
+from umqtt.simple import MQTTClient
 
 # Define I2C pins
 I2C_SCL = Pin(1)
@@ -43,6 +46,56 @@ ERROR_FLAG = 0x02       # Bit 1 in MEAS_STS
 IDLE_MODE = 0x00
 CONT_MODE = 0x02
 SING_MODE = 0x01
+
+# mosquitto_sub -h 192.168.1.92 -t "sensor/#"
+# mosquitto_sub -h 192.168.1.92 -t "sensor/co2"
+# mosquitto_sub -h 192.168.1.92 -t "sensor/smoke"
+
+# Wi-Fi Configuration
+SSID = 'HamptonA'
+PASSWORD = 'Stroud2Dell'
+MQTT_BROKER = '192.168.1.92'  
+MQTT_PORT = 1883
+CLIENT_ID = ubinascii.hexlify(machine.unique_id())
+MQTT_TOPIC_CO2 = b"sensor/co2"
+MQTT_TOPIC_SMOKE = b"sensor/smoke"
+
+# Wi-Fi Connection Function
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    wlan.connect(SSID, PASSWORD)
+    max_wait = 15
+    while max_wait > 0:
+        if wlan.isconnected():
+            print('Connected to Wi-Fi')
+            print(wlan.ifconfig())
+            break
+        max_wait -= 1
+        print('Waiting for connection...')
+        time.sleep(1)
+    else:
+        print('Could not connect to Wi-Fi')
+        sys.exit()
+
+# MQTT Publish Function
+def publish(topic, msg):
+    try:
+        client.publish(topic, msg)
+        print(f'Published {msg} to {topic}')
+    except Exception as e:
+        print(f'Failed to publish message: {e}')
+
+# Initialize MQTT Client
+def init_mqtt():
+    global client
+    try:
+        client = MQTTClient(CLIENT_ID, MQTT_BROKER, MQTT_PORT)
+        client.connect()
+        print('Connected to MQTT Broker')
+    except Exception as e:
+        print(f'Failed to connect to MQTT Broker: {e}')
+        sys.exit()
 
 # Function to read smoke sensor value
 def read_smoke_level():
@@ -264,22 +317,35 @@ else:
 period = read_meas_rate()
 print(f"The period of measurement for the C02 sensor is {period} seconds.")
 
+# Connect to Wi-Fi
+connect_wifi()
+
+# Initialize MQTT
+init_mqtt()
+
 
 # Main loop to read CO2 concentration every 10 seconds
 print("Starting continuous measurement of CO2 and Smoke...")
 sec = 0
 
+# ******* INSERT OFFSET TO AVOID ERROR? ************
+time.sleep(1)
+
 while True:
     # read smoke concentration roughly every second
     for i in range(0,11):
-        time.sleep(1.1)
+        time.sleep(1)
         smoke_v_level = read_smoke_level()
         smoke_ppm = round(81.7*math.exp(1.23*smoke_v_level))
+        smoke_message = str(smoke_ppm).encode('utf-8')
         print(f"Smoke Concentration: {smoke_ppm} ppm")
+        publish(MQTT_TOPIC_SMOKE, smoke_message)
         
     if is_data_ready():
         co2_concentration = read_co2_data()
         if co2_concentration is not None:
-            print(f"CO2 Concentration: {co2_concentration} ppm")
+            co2_message = str(co2_concentration).encode('utf-8')
+            # Publish CO2 data
+            publish(MQTT_TOPIC_CO2, co2_message)
         else:
             print("Failed to read CO2 concentration.")
