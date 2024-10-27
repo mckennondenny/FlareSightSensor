@@ -84,6 +84,14 @@ CLIENT_ID = ubinascii.hexlify(machine.unique_id())
 MQTT_TOPIC_CO2 = b"sensor/co2"
 MQTT_TOPIC_SMOKE = b"sensor/smoke"
 
+# Get the current local time
+now = time.localtime()
+
+# Manually format the time into a string for the filename
+filename = '{:04d}-{:02d}-{:02d}_{:02d}-{:02d}-{:02d}.txt'.format(
+    now[0], now[1], now[2], now[3], now[4], now[5]
+)
+
 # Function to control the heater voltage
 def set_heater_voltage(state):
     if state == 'HIGH':
@@ -388,10 +396,10 @@ def init_sensor():
 # init_mqtt()
 
 # Function to log data to a file
-def log_data_to_file(data):
+def log_data_to_file(smoke, co2, co):
     try:
-        with open('garage_test.txt', 'a') as f:
-            f.write(data + '\n')
+        with open(filename, 'a') as f:
+            f.write('Smoke: '+ str(smoke) + ';' + 'CO2: '+ str(co2) + ';' + 'CO: ' + str(co2) + ';\n')
         # print(f"Data logged: {data}")
     except Exception as e:
         print(f"Failed to log data: {e}")
@@ -399,6 +407,18 @@ def log_data_to_file(data):
 # ******* INSERT OFFSET TO AVOID ERROR? ************
 time.sleep(0.5)
 
+def print_readings(smoke, co2, co):
+    print(f"Smoke: {smoke} ppm")
+    print(f"C02: {co2} ppm")
+    print(f"C0: {co} ppm")
+    print()
+    
+
+smoke_reading = 0
+co_reading = 0
+co2_reading = 0
+
+print(f"File name:{filename}.txt")
 # Main loop to sample all sensors
 while True:
     # Read smoke concentration roughly every second
@@ -407,8 +427,9 @@ while True:
         smoke_v_level = read_smoke_level()
         smoke_ppm = round(81.7 * math.exp(1.23 * smoke_v_level))
         smoke_message = f"Smoke Concentration: {smoke_ppm} ppm"
-        print(smoke_message)
-        log_data_to_file(smoke_message)
+        smoke_reading = smoke_ppm
+        print_readings(smoke_reading, co2_reading, co_reading)
+        log_data_to_file(smoke_reading, co2_reading, co_reading)
 
         # CO Sensor Heater Cycle Management
         current_time = time.time()
@@ -424,8 +445,9 @@ while True:
             # Read CO sensor before switching back to HIGH voltage
             co_ppm = read_co_sensor()
             co_message = f"CO Concentration: {co_ppm:.2f} ppm"
-            print(co_message)
-            log_data_to_file(co_message)
+            co_reading = round(co_ppm,2)
+            print_readings(smoke_reading, co2_reading, co_reading)
+            log_data_to_file(smoke_reading, co2_reading, co_reading)
 
             # Switch back to HIGH voltage phase (heating phase)
             set_heater_voltage('HIGH')
@@ -437,7 +459,8 @@ while True:
         co2_concentration = read_co2_data()
         if co2_concentration is not None:
             co2_message = f"CO2 Concentration: {co2_concentration} ppm"
-            print(co2_message)
-            log_data_to_file(co2_message)
+            co2_reading = co2_concentration
+            print_readings(smoke_reading, co2_reading, co_reading)
+            log_data_to_file(smoke_reading, co2_reading, co_reading)
         else:
             print("Failed to read CO2 concentration.")

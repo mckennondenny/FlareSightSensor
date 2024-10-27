@@ -11,9 +11,6 @@ from umqtt.simple import MQTTClient
 I2C_SCL = Pin(1)
 I2C_SDA = Pin(0)
 
-# Set up the analog pin for the smoke sensor
-smoke_sensor = ADC(Pin(26))  # Use ADC0 (Pin 26)
-
 # Timing Variables
 PERIOD = 0x0A 
 
@@ -22,6 +19,21 @@ i2c = I2C(0, scl=I2C_SCL, sda=I2C_SDA, freq=400000)
 
 # Sensor I2C address and registers
 SENSOR_ADDR = 0x28
+
+# Set up the analog pins for the sensors
+smoke_sensor = ADC(Pin(26))    # Smoke sensor on ADC0 (Pin 26)
+co_sensor_adc = ADC(Pin(27))   # CO sensor on ADC1 (Pin 27)
+
+# GPIO pin to control the heater voltage for CO sensor (via MOSFET)
+heater_pin = Pin(15, Pin.OUT)  # Use Pin 15 as the digital output for heater control
+
+# Heater cycle timings in seconds
+HIGH_VOLTAGE_DURATION = 60   # 60 seconds at 5V (heating phase)
+LOW_VOLTAGE_DURATION = 90    # 90 seconds at 1.4V (sensing phase)
+
+# Initialize heater state and timer
+heater_state = 'HIGH'
+heater_timer_start = time.time()
 
 # Register addresses
 SENS_RST = 0x10
@@ -54,12 +66,13 @@ SING_MODE = 0x01
 # mosquitto_sub -h 192.168.1.92 -t "sensor/smoke"
 
 # Wi-Fi Configuration
-SSID = "Huang"
-PASSWORD = "abcde12345"
-MQTT_BROKER = '192.168.86.42'  
+SSID = "HamptonA"
+PASSWORD = "Stroud2Dell"
+MQTT_BROKER = '192.168.1.134'  
 MQTT_PORT = 1883
 CLIENT_ID = ubinascii.hexlify(machine.unique_id())
 MQTT_TOPIC_CO2 = b"sensor/co2"
+MQTT_TOPIC_CO = b"sensor/co" 
 MQTT_TOPIC_SMOKE = b"sensor/smoke"
 
 # Wi-Fi Connection Function
@@ -81,10 +94,11 @@ def connect_wifi():
         sys.exit()
 
 # MQTT Publish Function
-def publish(topic, msg):
+def publish_data(smoke, co2, co):
     try:
-        client.publish(topic, msg)
-        print(f'Published {msg} to {topic}')
+        client.publish(MQTT_TOPIC_SMOKE, str(smoke))
+        client.publish(MQTT_TOPIC_CO2, str(co2))
+        client.publish(MQTT_TOPIC_CO, str(co))
     except Exception as e:
         print(f'Failed to publish message: {e}')
 
@@ -290,7 +304,12 @@ def read_meas_rate():
 def init_sensor():
     init_cont_mode()
     init_int_cfg()
-    
+   
+def print_readings(smoke, co2, co):
+    print(f"Smoke: {smoke} ppm")
+    print(f"C02: {co2} ppm")
+    print(f"C0: {co} ppm")
+    print()
     
 # Begin initialization
 print("Resetting C02 sensor...")
@@ -320,10 +339,10 @@ period = read_meas_rate()
 print(f"The period of measurement for the C02 sensor is {period} seconds.")
 
 # Connect to Wi-Fi
-#connect_wifi()
+connect_wifi()
 
 # Initialize MQTT
-#init_mqtt()
+init_mqtt()
 
 
 # Main loop to read CO2 concentration every 10 seconds
@@ -337,22 +356,51 @@ smoke_reading = 0
 co_reading = 0
 co2_reading = 0
 
+# Main loop to sample all sensors
 while True:
-    # read smoke concentration roughly every second
-    for i in range(0,11):
+    # Read smoke concentration roughly every second
+    for i in range(0, 11):  # Loop runs approximately 11 seconds
         time.sleep(1.1)
         smoke_v_level = read_smoke_level()
-        smoke_ppm = round(81.7*math.exp(1.23*smoke_v_level))
-        smoke_message = str(smoke_ppm).encode('utf-8')
-        print(f"Smoke Concentration: {smoke_ppm} ppm")
-        publish(MQTT_TOPIC_SMOKE, smoke_message)
-        
+        smoke_ppm = round(81.7 * math.exp(1.23 * smoke_v_level))
+        smoke_message = f"Smoke Concentration: {smoke_ppm} ppm"
+        smoke_reading = smoke_ppm
+        print_readings(smoke_reading, co2_reading, co_reading)
+        publish_data(smoke_reading, co2_reading, co_reading)
+
+        # CO Sensor Heater Cycle Management
+        current_time = time.time()
+        elapsed_time = current_time - heater_timer_start
+
+        if heater_state == 'HIGH' and elapsed_time >= HIGH_VOLTAGE_DURATION:
+            # Switch to LOW voltage phase (sensing phase)
+            set_heater_voltage('LOW')
+            heater_state = 'LOW'
+            heater_timer_start = current_time
+
+        elif heater_state == 'LOW' and elapsed_time >= LOW_VOLTAGE_DURATION:
+            # Read CO sensor before switching back to HIGH voltage
+            co_ppm = read_co_sensor()
+            co_message = f"CO Concentration: {co_ppm:.2f} ppm"
+            co_reading = round(co_ppm,2)
+            print_readings(smoke_reading, co2_reading, co_reading)
+            publish_data(smoke_reading, co2_reading, co_reading)
+
+            # Switch back to HIGH voltage phase (heating phase)
+            set_heater_voltage('HIGH')
+            heater_state = 'HIGH'
+            heater_timer_start = current_time
+
+    # CO₂ Sensor Sampling after smoke sensor loop (~11 seconds)
     if is_data_ready():
         co2_concentration = read_co2_data()
         if co2_concentration is not None:
-            co2_ppm = str(co2_concentration)
-            # Publish CO2 data
-            #publish(MQTT_TOPIC_CO2, co2_ppm)
-            print(f"CO2 Concentration: {co2_ppm} ppm")
+            co2_message = f"CO2 Concentration: {co2_concentration} ppm"
+            co2_reading = co2_concentration
+            print_readings(smoke_reading, co2_reading, co_reading)
+            publish_data(smoke_reading, co2_reading, co_reading)
         else:
             print("Failed to read CO2 concentration.")
+            
+            
+            # ublish(MQTT_TOPIC_SMOKE, smoke_message)
