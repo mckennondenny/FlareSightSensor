@@ -333,6 +333,10 @@ sec = 0
 # ******* INSERT OFFSET TO AVOID ERROR? ************
 time.sleep(0.5)
 
+smoke_reading = 0
+co_reading = 0
+co2_reading = 0
+
 while True:
     # read smoke concentration roughly every second
     for i in range(0,11):
@@ -341,7 +345,7 @@ while True:
         smoke_ppm = round(81.7*math.exp(1.23*smoke_v_level))
         smoke_message = str(smoke_ppm).encode('utf-8')
         print(f"Smoke Concentration: {smoke_ppm} ppm")
-        #publish(MQTT_TOPIC_SMOKE, smoke_message)
+        publish(MQTT_TOPIC_SMOKE, smoke_message)
         
     if is_data_ready():
         co2_concentration = read_co2_data()
